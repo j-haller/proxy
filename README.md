@@ -4,7 +4,7 @@ A Docker-based web server for hosting personal web applications on the local net
 
 ## Overview
 
-This project runs a reverse proxy in Docker that serves as the single entry point for self-hosted web apps. Each application runs in its own container, and the proxy routes incoming requests to the right one by hostname: each app gets its own subdomain, e.g. `dashboard.<server>.lan`.
+This project runs a reverse proxy in Docker that serves as the single entry point for self-hosted web apps. Each application runs in its own container, and the proxy routes incoming requests to the right one by path prefix: each app lives under its own path, e.g. `http://<server>/home-dashboard/`. Only one hostname has to resolve, so no custom DNS is needed.
 
 ## Goals
 
@@ -20,15 +20,19 @@ This project runs a reverse proxy in Docker that serves as the single entry poin
 
 ## Apps
 
-| Hostname | App | Config |
-|----------|-----|--------|
-| `dashboard.<server>.lan` | home-dashboard | `conf.d/dashboard.conf` |
+| URL | App | Config |
+|-----|-----|--------|
+| `http://<server>/home-dashboard/` | home-dashboard | `conf.d/apps/home-dashboard.conf` |
 
-Unknown hostnames get a 404 (`conf.d/default.conf`).
+The path prefix is stripped before forwarding, so each app serves from `/` internally (e.g. `/home-dashboard/sse` → `/sse`). Everything else gets a 404 (`conf.d/default.conf`).
 
-## DNS
+### App requirements
 
-Every app hostname must resolve to the server. Easiest is one wildcard entry in the local DNS (Pi-hole, AdGuard Home, OpenWrt): `*.<server>.lan → <server-ip>`. Without wildcard support, add one entry per app, or use `/etc/hosts` on each client.
+Since the prefix is stripped, the app does not know it lives under `/<app>/`. Its frontend must therefore use **relative URLs only** (`sse`, `api/foo`, assets via Vite `base: './'`), never absolute ones like `/sse`. Absolute redirects or cookies with `Path=/` must also be avoided or made prefix-aware (the proxy sends `X-Forwarded-Prefix`).
+
+## Name resolution
+
+Clients only need to resolve the server's name, e.g. via the router's DHCP hostname registration, mDNS (`<server>.local`), or the IP directly.
 
 ## Usage
 
@@ -41,5 +45,5 @@ Apps join the external `proxy` network and are addressed by their container alia
 
 ## Adding an app
 
-1. Add `conf.d/<app>.conf` with `listen 80;` and `server_name ~^<app>\.;`, proxying to the app's alias on the `proxy` network.
+1. Add `conf.d/apps/<app>.conf` with `location` blocks for `/<app>` (redirect to `/<app>/`) and `/<app>/`, stripping the prefix via `rewrite ^/<app>(/.*)$ $1 break;` before `proxy_pass` to the app's alias on the `proxy` network. Copy `home-dashboard.conf` as a template.
 2. Add it to the table above and run `docker compose exec nginx nginx -s reload`.
